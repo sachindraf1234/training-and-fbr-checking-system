@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>SLBFE Automation Suite - Combined Dashboard</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background:#f4f6fa; color:#1b2430; }
+  header { background:#7b1113; color:#ffd966; padding:18px 28px; }
+  header h1 { margin:0; font-size:22px; } header p { margin:6px 0 0; font-size:13px; color:#f1d7d7; }
+  main { padding:22px 28px; max-width:1400px; margin:auto; }
+  .panel { background:#fff; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,.12); padding:18px 20px; margin-bottom:26px; }
+  .panel h2 { margin:0 0 4px; font-size:18px; } .sub { color:#667; font-size:12px; margin-bottom:14px; }
+  .cards { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+  .card { background:#f0f3f8; border-radius:8px; padding:10px 16px; min-width:96px; text-align:center; }
+  .num { font-size:24px; font-weight:700; } .lbl { font-size:12px; color:#556; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th, td { border:1px solid #dde3ec; padding:6px 8px; text-align:left; vertical-align:top; }
+  th { background:#1f3864; color:#fff; position:sticky; top:0; }
+  tr:nth-child(even) td { background:#fafbfd; }
+  .muted { color:#778; } .links a { color:#1f4e9c; margin-right:14px; font-size:13px; }
+</style></head><body>
+<header><h1>SLBFE Automation Suite - Combined Dashboard</h1>
+<p>Two independent systems under one view &middot; generated 2026-10-25 15:01</p></header>
+<main>
+  <section class="panel">
+    <h2>System 1 - Pre Departure Training check <small style="font-weight:400;color:#667">(all applicants)</small></h2>
+    <div class="sub">updated: 2026-10-25 15:01</div>
+    <div class="cards"><div class="card"><div class="num">2</div><div class="lbl">TRAINED</div></div><div class="card"><div class="num">2</div><div class="lbl">NOT_TRAINED</div></div><div class="card"><div class="num">1</div><div class="lbl">REVIEW</div></div><div class="card"><div class="num">1</div><div class="lbl">INCOMPLETE</div></div></div>
+    <div class="links">
+      <a href="system1_training/training_results.xlsx">training_results.xlsx</a>
+      <a href="system1_training/progress.json">progress.json</a>
+      <span class="muted">proof screenshots: system1_training/screenshots/ folder</span>
+    </div>
+    <table><tr><th>No</th><th>Name</th><th>Status</th><th>Found by</th><th>Training</th><th>Date</th><th>Blacklisted</th><th>Note</th></tr><tr><td>1</td><td>GALGODAPITIYA M. LAKMAL SANJEEWA BANDARA</td><td><span style="background:#2e7d32;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">TRAINED</span></td><td>Current Passport=N9849716</td><td>Romania Pre departure Training</td><td>14/10/2026</td><td></td><td></td></tr><tr><td>2</td><td>VAIYAPURI THARMASEELAN</td><td><span style="background:#2e7d32;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">TRAINED</span></td><td>Previous Passport=N5408869</td><td>Orientation for other than Domestic Housekeeping-2 days</td><td>31/08/2026</td><td></td><td></td></tr><tr><td>3</td><td>HEMBATHANTHRIGE T. N. FERNANDO</td><td><span style="background:#c62828;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">NOT_TRAINED</span></td><td></td><td></td><td></td><td></td><td>Records exist but NO Pre Departure Training. Found only: Training</td></tr><tr><td>4</td><td>PEDURU HEWA LAHIRU MADURANGA</td><td><span style="background:#ef6c00;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">REVIEW</span></td><td></td><td></td><td></td><td></td><td>Pre Departure Training record found but its PP/NIC are not this applicant's numbers</td></tr><tr><td>5</td><td>MARASINGHA K. DILANI DELKA CHATHURANGANI</td><td><span style="background:#c62828;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">NOT_TRAINED</span></td><td></td><td></td><td></td><td>!!!!!! Blacklisted Employee !!! N11416857</td><td>Records exist but NO Pre Departure Training. Found only: Registration</td></tr><tr><td>6</td><td>JAYASURIYA K. NISHADINI PRASANGIKA PERERA</td><td><span style="background:#ef6c00;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">INCOMPLETE</span></td><td></td><td></td><td></td><td></td><td>Some searches failed - re-run to retry</td></tr></table>
+  </section>
+  <section class="panel">
+    <h2>System 2 - Female FBR Verification <small style="font-weight:400;color:#667">(female applicants only)</small></h2>
+    <div class="sub">updated: 2026-10-25 15:01:01</div>
+    <div class="cards"><div class="card"><div class="num">2</div><div class="lbl">VALID</div></div><div class="card"><div class="num">1</div><div class="lbl">EXPIRED</div></div><div class="card"><div class="num">1</div><div class="lbl">EXPIRES SOON</div></div><div class="card"><div class="num">1</div><div class="lbl">NOT FOUND</div></div><div class="card"><div class="num">1</div><div class="lbl">MISMATCH</div></div><div class="card"><div class="num">1</div><div class="lbl">ERROR</div></div></div>
+    <div class="links">
+      <a href="system2_fbr/output/fbr_report_latest.xlsx">fbr_report_latest.xlsx</a>
+      <a href="system2_fbr/output/fbr_report_latest.csv">fbr_report_latest.csv</a>
+      <a href="system2_fbr/output/fbr_summary.json">fbr_summary.json</a>
+    </div>
+    <table><tr><th>No</th><th>Name</th><th>Expiry</th><th>Validation</th><th>FBR Date</th><th>Expiry Date</th><th>Days Left</th><th>FBR Status</th><th>Passport</th><th>NIC</th><th>Remark</th></tr><tr><td>1</td><td>AKILA FEMALE</td><td><span style="background:#2e7d32;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">VALID</span></td><td><span style="background:#455a64;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">OK</span></td><td>15/10/2026 15:38:52</td><td>15/04/2027</td><td>172</td><td>Recommended</td><td>N8074311</td><td>980260925V</td><td></td></tr><tr><td>2</td><td>HISTORICAL FEMALE</td><td><span style="background:#c62828;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">EXPIRED</span></td><td><span style="background:#455a64;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">OK</span></td><td>26/01/2026 15:38:52</td><td>26/07/2026</td><td>-91</td><td>Recommended</td><td>P0262022</td><td>200477304008</td><td>Report expired 91 day(s) ago</td></tr><tr><td>3</td><td>SOON EXPIRY FEMALE</td><td><span style="background:#f9a825;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">EXPIRES SOON</span></td><td><span style="background:#455a64;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">OK</span></td><td>30/04/2026 15:38:52</td><td>30/10/2026</td><td>5</td><td>Pending</td><td>N11030886</td><td>820453352V</td><td>Expires in 5 day(s)</td></tr><tr><td>4</td><td>NOBODY FEMALE</td><td><span style="background:#455a64;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">-</span></td><td><span style="background:#757575;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">NOT FOUND</span></td><td></td><td></td><td></td><td></td><td>N0000001</td><td>999999999V</td><td>No row for Passport; No row for NIC</td></tr><tr><td>5</td><td>MISMATCH FEMALE</td><td><span style="background:#455a64;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">-</span></td><td><span style="background:#ef6c00;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">MISMATCH</span></td><td></td><td></td><td></td><td></td><td>M2000001</td><td>933333333V</td><td>Row returned but passport/NIC differ from CURRENT ones (returned N9999999 / 111111111V); possibly an old passport or ID.</td></tr><tr><td>6</td><td>NIC FALLBACK FEMALE</td><td><span style="background:#2e7d32;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">VALID</span></td><td><span style="background:#ef6c00;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">CHECK</span></td><td>25/09/2026 15:38:52</td><td>25/03/2027</td><td>151</td><td>Recommended</td><td>SHORT</td><td>922222222V</td><td>report filed under passport N7654321 (current is SHORT)</td></tr><tr><td>7</td><td>SESSION FAIL FEMALE</td><td><span style="background:#455a64;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">-</span></td><td><span style="background:#c62828;color:#fff;padding:2px 9px;border-radius:10px;font-size:12px;white-space:nowrap">ERROR</span></td><td></td><td></td><td></td><td></td><td>E2000001</td><td>944444444V</td><td>After re-login: SessionExpiredError: Session expired after submitting the search.</td></tr></table>
+  </section>
+</main></body></html>
