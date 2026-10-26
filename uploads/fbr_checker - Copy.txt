@@ -1,0 +1,538 @@
+#!/usr/bin/env python3
+"""
+SLBFE - Family Background Report (FBR) Verification Checker
+===========================================================
+For every applicant in name.txt it:
+  1. Opens the FBR Verification page (fbr_sms.asp)
+  2. Searches by CURRENT passport number, then by CURRENT ID number
+  3. Validates that the returned row really belongs to that person's
+     CURRENT passport / CURRENT NIC (a row for an old passport is flagged)
+  4. Reads the "Date (SMS Received)", adds 6 months and checks whether the
+     report has EXPIRED (today > date + 6 months)
+  5. Saves everything to Excel + CSV (expired rows highlighted red)
+
+Every run re-checks EVERY applicant from scratch (nothing is cached), and
+the expiry is recalculated against today's date each time.
+
+Setup
+-----
+    pip install playwright openpyxl
+    playwright install chromium
+
+Credentials (never hard-code them) - set environment variables:
+    Windows (cmd):   set SLBFE_USER=youruser  &  set SLBFE_PASS=yourpass
+    Linux / macOS:   export SLBFE_USER=youruser SLBFE_PASS=yourpass
+
+Run
+---
+    python fbr_checker.py                    # all applicants, visible browser
+    python fbr_checker.py --headless         # no browser window
+    python fbr_checker.py --only 1-10        # applicants No. 1..10
+    python fbr_checker.py --only 3,7,15      # specific applicant numbers
+    python fbr_checker.py --names name.txt --out results
+"""
+
+from __future__ import annotations
+
+import argparse
+import calendar
+import csv
+import os
+import re
+import sys
+import time
+from dataclasses import dataclass, field, asdict
+from datetime import date, datetime
+from pathlib import Path
+
+from playwright.sync_api import (
+    Page,
+    TimeoutError as PWTimeout,
+    sync_playwright,
+)
+
+# ----------------------------------------------------------------------------
+# CONFIG
+# ----------------------------------------------------------------------------
+BASE = "https://applications.slbfe.lk"
+WELCOME_URL = f"{BASE}/logroot/an_welcomenew.asp"
+FBR_URL = f"{BASE}/logroot/agency/cmpl/fbr_sms.asp"
+
+VALIDITY_MONTHS = 6          # FBR is valid for 6 months from SMS-received date
+NAV_TIMEOUT = 60_000         # ms
+DELAY_BETWEEN = 0.8          # seconds between searches (be gentle to the server)
+RETRIES = 2
+SESSION_FILE = "slbfe_session.json"   # saved login so you don't log in each time
+
+# Login page selectors. The login page was NOT in the files you sent, so these
+# are generic guesses; see find_login_fields(). If login fails, run once with
+# --manual-login and log in by hand in the opened browser.
+USER_ENV, PASS_ENV = "SLBFE_USER", "SLBFE_PASS"
+
+
+# ----------------------------------------------------------------------------
+# DATA MODELS
+# ----------------------------------------------------------------------------
+@dataclass
+class Applicant:
+    no: int
+    name: str
+    passport: str
+    nic: str
+    prev_passport: str = ""
+    prev_nic: str = ""
+
+
+@dataclass
+class FbrRow:
+    sms_dt: datetime
+    passport: str
+    nic: str
+    agency_lno: str
+    status: str
+
+
+@dataclass
+class Result:
+    no: int
+    name: str
+    current_passport: str
+    current_nic: str
+    searched_by: str = ""
+    match_on: str = ""             # which CURRENT identifier matched
+    fbr_date: str = ""
+    expiry_date: str = ""
+    days_left: str = ""
+    expiry_state: str = ""         # VALID / EXPIRED / EXPIRES SOON
+    fbr_status: str = ""           # Recommended / Pending ...
+    result_passport: str = ""
+    result_nic: str = ""
+    agency_lno: str = ""
+    validation: str = ""           # OK / MISMATCH / NOT FOUND / ERROR
+    remark: str = ""
+    checked_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+# ----------------------------------------------------------------------------
+# INPUT: parse name.txt (markdown table)
+# ----------------------------------------------------------------------------
+def _clean(v: str) -> str:
+    v = v.strip().strip("*").strip().replace("\\-", "-")
+    return "" if v in ("-", "") else v.strip()
+
+
+def load_applicants(path: str) -> list[Applicant]:
+    out: list[Applicant] = []
+    for line in Path(path).read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 4 or not cells[0].isdigit():
+            continue  # header / separator rows
+        cells += [""] * (6 - len(cells))
+        out.append(
+            Applicant(
+                no=int(cells[0]),
+                name=_clean(cells[1]),
+                passport=_clean(cells[2]).upper().replace(" ", ""),
+                nic=_clean(cells[3]).upper().replace(" ", ""),
+                prev_passport=_clean(cells[4]).upper().replace(" ", ""),
+                prev_nic=_clean(cells[5]).upper().replace(" ", ""),
+            )
+        )
+    return out
+
+
+def select_applicants(all_: list[Applicant], spec: str | None) -> list[Applicant]:
+    if not spec:
+        return all_
+    wanted: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-", 1)
+            wanted.update(range(int(a), int(b) + 1))
+        elif part:
+            wanted.add(int(part))
+    return [a for a in all_ if a.no in wanted]
+
+
+# ----------------------------------------------------------------------------
+# DATE LOGIC
+# ----------------------------------------------------------------------------
+def add_months(d: date, months: int) -> date:
+    """Calendar-month addition (31 Aug + 6m -> 28/29 Feb style clamping)."""
+    idx = d.month - 1 + months
+    y, m = d.year + idx // 12, idx % 12 + 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def expiry_info(sms_dt: datetime, today: date | None = None) -> tuple[date, int, str]:
+    today = today or date.today()
+    expiry = add_months(sms_dt.date(), VALIDITY_MONTHS)
+    days_left = (expiry - today).days
+    if days_left < 0:
+        state = "EXPIRED"
+    elif days_left <= 14:
+        state = "EXPIRES SOON"
+    else:
+        state = "VALID"
+    return expiry, days_left, state
+
+
+# ----------------------------------------------------------------------------
+# LOGIN
+# ----------------------------------------------------------------------------
+def is_logged_in(page: Page) -> bool:
+    """Logged in = FBR page shows the search form instead of a login page."""
+    try:
+        page.goto(FBR_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+    except PWTimeout:
+        return False
+    return page.locator('input[name="ppno"]').count() > 0
+
+
+def find_login_fields(page: Page):
+    pwd = page.locator('input[type="password"]').first
+    user = page.locator(
+        'input[type="text"]:visible, input:not([type]):visible'
+    ).first
+    submit = page.locator(
+        'input[type="submit"], button[type="submit"], input[type="image"]'
+    ).first
+    return user, pwd, submit
+
+
+def login(page: Page, manual: bool) -> None:
+    if is_logged_in(page):
+        print("[login] existing session is still valid")
+        return
+
+    user, pwd_ = os.getenv(USER_ENV), os.getenv(PASS_ENV)
+    page.goto(WELCOME_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+
+    if not manual and user and pwd_ and page.locator('input[type="password"]').count():
+        u, p, s = find_login_fields(page)
+        u.fill(user)
+        p.fill(pwd_)
+        with page.expect_navigation(timeout=NAV_TIMEOUT):
+            s.click()
+        if is_logged_in(page):
+            print("[login] automatic login OK")
+            return
+        print("[login] automatic login did not reach the FBR page")
+
+    # Fallback: let a human log in (also handles captcha / OTP if any)
+    print("\n>>> Please log in manually in the browser window, then come back here.")
+    input(">>> Press ENTER when you can see the portal home page... ")
+    if not is_logged_in(page):
+        sys.exit("Login failed - FBR page not reachable. Aborting.")
+    print("[login] manual login OK")
+
+
+# ----------------------------------------------------------------------------
+# SEARCH + PARSE
+# ----------------------------------------------------------------------------
+DATE_RE = re.compile(r"(\d{2})/(\d{2})/(\d{4})(?:\s*-?\s*(\d{2}:\d{2}:\d{2}))?")
+
+
+def parse_result_rows(page: Page) -> list[FbrRow]:
+    """Reads the result table (cols: #, Date, Passport, NIC, Agency LNO, Status)."""
+    raw = page.evaluate(
+        """() => {
+            const rows = [];
+            document.querySelectorAll('tr').forEach(tr => {
+                const tds = Array.from(tr.children).filter(c => c.tagName === 'TD');
+                // innermost data rows only: >=5 cells, no nested table
+                if (tds.length >= 5 && !tr.querySelector('table')) {
+                    rows.push(tds.map(td => td.innerText.replace(/\\s+/g,' ').trim()));
+                }
+            });
+            return rows;
+        }"""
+    )
+    parsed: list[FbrRow] = []
+    for cells in raw:
+        joined = " | ".join(cells)
+        m = DATE_RE.search(joined)
+        if not m:
+            continue
+        # locate the cell that holds the date and read the cells after it
+        di = next((i for i, c in enumerate(cells) if DATE_RE.search(c)), None)
+        if di is None or len(cells) < di + 5:
+            continue
+        dm = DATE_RE.search(cells[di])
+        d, mo, y, t = dm.groups()
+        hh, mm, ss = (t or "00:00:00").split(":")
+        parsed.append(
+            FbrRow(
+                sms_dt=datetime(int(y), int(mo), int(d), int(hh), int(mm), int(ss)),
+                passport=cells[di + 1].upper().replace(" ", ""),
+                nic=cells[di + 2].upper().replace(" ", ""),
+                agency_lno=cells[di + 3],
+                status=cells[di + 4],
+            )
+        )
+    return parsed
+
+
+def search(page: Page, passport: str = "", nic: str = "") -> list[FbrRow]:
+    """Opens the form fresh, fills ONE (or both) identifiers, submits, parses."""
+    page.goto(FBR_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+    if page.locator('input[name="ppno"]').count() == 0:
+        raise RuntimeError("Search form missing - session expired / logged out?")
+
+    page.fill('input[name="ppno"]', passport)
+    page.fill('input[name="idno"]', nic)
+    with page.expect_navigation(timeout=NAV_TIMEOUT):
+        page.click('input[name="search"]')
+    page.wait_for_load_state("domcontentloaded")
+    return parse_result_rows(page)
+
+
+def search_with_retry(page: Page, **kw) -> list[FbrRow]:
+    last: Exception | None = None
+    for attempt in range(RETRIES + 1):
+        try:
+            return search(page, **kw)
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(2 * (attempt + 1))
+    raise last  # type: ignore[misc]
+
+
+# ----------------------------------------------------------------------------
+# PER-APPLICANT VALIDATION
+# ----------------------------------------------------------------------------
+def check_applicant(page: Page, a: Applicant, today: date) -> Result:
+    res = Result(no=a.no, name=a.name, current_passport=a.passport, current_nic=a.nic)
+
+    # Searches to try, in order. Each uses ONE current identifier only
+    # (this is exactly what the screen recording shows).
+    attempts: list[tuple[str, dict]] = []
+    if a.passport:
+        attempts.append(("Passport", {"passport": a.passport}))
+    if a.nic:
+        attempts.append(("NIC", {"nic": a.nic}))
+
+    seen: list[tuple[str, FbrRow]] = []
+    notes: list[str] = []
+    try:
+        for label, kw in attempts:
+            rows = search_with_retry(page, **kw)
+            for r in rows:
+                seen.append((label, r))
+            if not rows:
+                notes.append(f"No row for {label}")
+            time.sleep(DELAY_BETWEEN)
+    except Exception as e:  # noqa: BLE001
+        res.validation, res.remark = "ERROR", f"{type(e).__name__}: {e}"[:200]
+        return res
+
+    # Keep only rows that belong to the CURRENT passport or CURRENT NIC
+    valid: list[tuple[str, FbrRow, str]] = []
+    stray: list[FbrRow] = []
+    for label, r in seen:
+        pp_ok = bool(a.passport) and r.passport == a.passport
+        id_ok = bool(a.nic) and r.nic == a.nic
+        if pp_ok or id_ok:
+            matched = "Passport+NIC" if (pp_ok and id_ok) else ("Passport" if pp_ok else "NIC")
+            valid.append((label, r, matched))
+        else:
+            stray.append(r)
+
+    if not valid:
+        if stray:
+            s = stray[0]
+            res.validation = "MISMATCH"
+            res.result_passport, res.result_nic = s.passport, s.nic
+            res.remark = (
+                "Row returned but passport/NIC differ from CURRENT ones "
+                f"(returned {s.passport} / {s.nic}); possibly an old passport or ID."
+            )
+        else:
+            res.validation = "NOT FOUND"
+            res.remark = "; ".join(notes) or "No FBR record"
+        return res
+
+    # Newest report wins (de-duplicate across the two searches)
+    label, row, matched = max(valid, key=lambda t: t[1].sms_dt)
+    expiry, days_left, state = expiry_info(row.sms_dt, today)
+
+    # Cross-check: both identifiers should point to the same person
+    cross = ""
+    if matched != "Passport+NIC":
+        other_ok = any(
+            (r.sms_dt == row.sms_dt and (r.passport == a.passport and r.nic == a.nic))
+            for _, r, _ in valid
+        )
+        if not other_ok and len({(r.passport, r.nic) for _, r, _ in valid}) > 1:
+            cross = "Passport and NIC searches returned different records - check manually."
+
+    res.searched_by = label
+    res.match_on = matched
+    res.fbr_date = row.sms_dt.strftime("%d/%m/%Y %H:%M:%S")
+    res.expiry_date = expiry.strftime("%d/%m/%Y")
+    res.days_left = str(days_left)
+    res.expiry_state = state
+    res.fbr_status = row.status
+    res.result_passport, res.result_nic = row.passport, row.nic
+    res.agency_lno = row.agency_lno
+    old_id = []
+    if a.passport and row.passport != a.passport:
+        old_id.append(f"report filed under passport {row.passport} (current is {a.passport})")
+    if a.nic and row.nic != a.nic:
+        old_id.append(f"report filed under NIC {row.nic} (current is {a.nic})")
+    res.validation = "OK" if not (cross or old_id) else "CHECK"
+    parts = [cross] + [("; ".join(old_id)) if old_id else ""]
+    if state == "EXPIRED":
+        parts.append("Report expired %d day(s) ago" % -days_left)
+    res.remark = " | ".join(p for p in parts if p)
+    return res
+
+
+# ----------------------------------------------------------------------------
+# OUTPUT
+# ----------------------------------------------------------------------------
+COLUMNS = [
+    ("No", "no"), ("Name", "name"),
+    ("Current Passport", "current_passport"), ("Current NIC", "current_nic"),
+    ("Validation", "validation"), ("Expiry State", "expiry_state"),
+    ("FBR Date (SMS Received)", "fbr_date"), ("Expiry Date (+6 months)", "expiry_date"),
+    ("Days Left", "days_left"), ("FBR Status", "fbr_status"),
+    ("Matched On", "match_on"), ("Returned Passport", "result_passport"),
+    ("Returned NIC", "result_nic"), ("Agency LNO", "agency_lno"),
+    ("Remark", "remark"), ("Checked At", "checked_at"),
+]
+
+
+def save_outputs(results: list[Result], base: str) -> None:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    csv_path, xlsx_path = f"{base}_{stamp}.csv", f"{base}_{stamp}.xlsx"
+
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow([c[0] for c in COLUMNS])
+        for r in results:
+            d = asdict(r)
+            w.writerow([d[k] for _, k in COLUMNS])
+
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "FBR Check"
+        ws.append([c[0] for c in COLUMNS])
+        for cell in ws[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="1F3864")
+            cell.alignment = Alignment(horizontal="center")
+
+        red = PatternFill("solid", fgColor="F8CBAD")
+        amber = PatternFill("solid", fgColor="FFE699")
+        green = PatternFill("solid", fgColor="C6E0B4")
+        grey = PatternFill("solid", fgColor="D9D9D9")
+
+        for r in results:
+            d = asdict(r)
+            ws.append([d[k] for _, k in COLUMNS])
+            row = ws.max_row
+            if r.expiry_state == "EXPIRED":
+                fill = red
+            elif r.expiry_state == "EXPIRES SOON":
+                fill = amber
+            elif r.expiry_state == "VALID" and r.validation == "OK":
+                fill = green
+            else:
+                fill = grey
+            for cell in ws[row]:
+                cell.fill = fill
+            if r.expiry_state == "EXPIRED":
+                for cell in ws[row]:
+                    cell.font = Font(bold=True, color="9C0006")
+
+        for i, (title, _) in enumerate(COLUMNS, 1):
+            width = max(len(title), *(len(str(c.value or "")) for c in ws[get_column_letter(i)]))
+            ws.column_dimensions[get_column_letter(i)].width = min(width + 2, 60)
+        ws.freeze_panes = "C2"
+        ws.auto_filter.ref = ws.dimensions
+        wb.save(xlsx_path)
+        print(f"Excel : {xlsx_path}")
+    except ImportError:
+        print("openpyxl not installed -> Excel skipped (pip install openpyxl)")
+    print(f"CSV   : {csv_path}")
+
+
+def print_summary(results: list[Result]) -> None:
+    n = len(results)
+    cnt = lambda f: sum(1 for r in results if f(r))  # noqa: E731
+    print("\n" + "=" * 60)
+    print(f"Checked          : {n}")
+    print(f"VALID            : {cnt(lambda r: r.expiry_state == 'VALID')}")
+    print(f"EXPIRES SOON     : {cnt(lambda r: r.expiry_state == 'EXPIRES SOON')}")
+    print(f"EXPIRED          : {cnt(lambda r: r.expiry_state == 'EXPIRED')}")
+    print(f"NOT FOUND        : {cnt(lambda r: r.validation == 'NOT FOUND')}")
+    print(f"MISMATCH / CHECK : {cnt(lambda r: r.validation in ('MISMATCH', 'CHECK'))}")
+    print(f"ERRORS           : {cnt(lambda r: r.validation == 'ERROR')}")
+    expired = [r for r in results if r.expiry_state == "EXPIRED"]
+    if expired:
+        print("\nEXPIRED applicants:")
+        for r in expired:
+            print(f"  #{r.no:<3} {r.name[:45]:<45} FBR {r.fbr_date[:10]}  expired {r.expiry_date}")
+    print("=" * 60)
+
+
+# ----------------------------------------------------------------------------
+# MAIN
+# ----------------------------------------------------------------------------
+def main() -> None:
+    ap = argparse.ArgumentParser(description="SLBFE FBR verification + 6-month expiry checker")
+    ap.add_argument("--names", default="name.txt", help="applicant table (default name.txt)")
+    ap.add_argument("--out", default="fbr_results", help="output file prefix")
+    ap.add_argument("--only", help="e.g. 1-10 or 3,7,15 (applicant numbers)")
+    ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--manual-login", action="store_true", help="skip auto-login, log in by hand")
+    args = ap.parse_args()
+
+    applicants = select_applicants(load_applicants(args.names), args.only)
+    if not applicants:
+        sys.exit("No applicants loaded - check the file path / format.")
+    print(f"Loaded {len(applicants)} applicant(s). Today = {date.today():%d/%m/%Y}")
+
+    results: list[Result] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=args.headless)
+        ctx_kw = {"storage_state": SESSION_FILE} if Path(SESSION_FILE).exists() else {}
+        ctx = browser.new_context(viewport={"width": 1400, "height": 900}, **ctx_kw)
+        ctx.set_default_timeout(NAV_TIMEOUT)
+        page = ctx.new_page()
+
+        # The portal pops alert() on short passport numbers - never let it hang.
+        page.on("dialog", lambda d: d.accept())
+
+        login(page, manual=args.manual_login)
+        ctx.storage_state(path=SESSION_FILE)
+
+        today = date.today()
+        try:
+            for i, a in enumerate(applicants, 1):
+                r = check_applicant(page, a, today)
+                results.append(r)
+                flag = r.expiry_state or r.validation
+                print(f"[{i:>3}/{len(applicants)}] #{a.no:<3} {a.passport:<10} {a.nic:<13} -> "
+                      f"{flag:<13} {r.fbr_status:<12} {r.fbr_date[:10]} {r.remark[:60]}")
+        except KeyboardInterrupt:
+            print("\nInterrupted - saving what has been checked so far...")
+        finally:
+            browser.close()
+
+    save_outputs(results, args.out)
+    print_summary(results)
+
+
+if __name__ == "__main__":
+    main()

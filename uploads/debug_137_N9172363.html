@@ -1,0 +1,119 @@
+<html><head>
+<title>:: Checking Sheet ::</title>
+<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+<script language="JavaScript">
+function printPage() {
+if(document.all) {
+document.all.divButtons.style.visibility = 'hidden';
+window.print();
+document.all.divButtons.style.visibility = 'visible';
+} else {
+document.getElementById('divButtons').style.visibility = 'hidden';
+window.print();
+document.getElementById('divButtons').style.visibility = 'visible';
+}
+}
+</script>
+
+<script language="JAVASCRIPT">
+	function sf()	{document.form1.reader.focus();}
+	function sf2()	{document.form2.idindex.focus();
+	
+	
+	
+	document.form2.idindex.click();}
+	function sf3()	{document.form3.return2.focus();}
+	
+</script>
+	<script language="JAVASCRIPT">
+	function chk()	
+	{ x = document.form1
+			form1.ppno.value=form1.reader.value
+			if (isNaN(Number(form1.ppno.value.substr(1,7))))
+			{alert("Enter Correct Number )");form1.reader.value="";form1.reader.focus();return false;}		
+			if   (form1.ppno.value.length<8) 
+			{alert("Enter Correct number. ");form1.reader.value="";form1.reader.focus();return false}			
+		}
+	</script>
+
+
+<script language="JavaScript">
+function upperCase(x)
+{
+
+var str=x.toUpperCase()
+if (str.substr(3,3)=="LKA")
+{var pos=str.indexOf("-",0)+1
+var lka=str.substr(pos,str.indexOf("-",pos)-pos)
+
+pos=str.indexOf("-",pos)+1
+var name1=str.substr(pos,str.indexOf("-",pos)-pos)
+pos=str.indexOf("-",pos)+1
+var name2=str.substr(pos,str.indexOf("-",pos)-pos)
+pos=str.indexOf("-",pos)+1
+form1.name.value=name1+" "+name2
+var ppno=str.substr(pos,str.indexOf("-",pos)-pos)
+form1.ppno.value=ppno
+form1.reader.value=ppno
+pos=str.indexOf("-",pos)+1
+var bday=str.substr(pos,str.indexOf("-",pos)-pos)
+form1.bday.value=bday
+pos=str.indexOf("-",pos)+1
+var sex=str.substr(pos,str.indexOf("-",pos)-pos)
+form1.sex.value=sex
+pos=str.indexOf("-",pos)+1
+var eday=str.substr(pos,str.indexOf("-",pos)-pos)
+pos=str.indexOf("-",pos)+1
+var idno=str.slice(pos)
+form1.Nic_No.value=idno}
+else
+{form1.ppno.value=str
+form1.reader.value=form1.ppno.value
+}
+}
+
+
+</script>
+
+
+</head>
+
+<body bgcolor="#FFFFFF" text="#000000" onload="sf2()">
+
+
+<table width="68%" border="1" align="center" bordercolor="#CCCCFF" bgcolor="#FEFCF3" cellpadding="0" cellspacing="0">
+  <tbody><tr> 
+    <td bgcolor="#FBC944" height="74"> 
+      <div align="center"><font face="Verdana, Arial, Helvetica, sans-serif" size="4" color="#660000">Not 
+        Found !!!</font></div>
+    </td>
+  </tr>
+  <tr>
+  
+  
+    <td bgcolor="#FEFCF3"><font color="#FF0000"><b><font size="6"></font></b></font></td>
+  </tr>
+  <tr> 
+    <td bgcolor="#FEFCF3"><b><font size="4">Sorry !!!</font></b></td>
+  </tr>
+  <tr> 
+    <td bgcolor="#FEFCF3"><font size="4">The number you entered [N9172363 
+      ] , not found !!!</font></td>
+  </tr>
+  <tr> 
+    <td bgcolor="#FEFCF3"><font size="4">Please check again.</font></td>
+  </tr>
+  <tr> 
+    <td bgcolor="#FEFCF3" height="56"> 
+      <div align="center"> 
+        <input type="button" name="return2" onclick="location= 'TraRegChk.asp'" value="R E T U R N " style="">
+      </div>
+    </td>
+  </tr>
+</tbody></table>
+
+
+
+ 
+
+</body></html>
